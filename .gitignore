@@ -1,0 +1,8 @@
+.venv/
+.env
+.learninput.pid
+.learninput.log
+__pycache__/
+*.pyc
+.cache/
+.DS_Store
