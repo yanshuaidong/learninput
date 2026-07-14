@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CACHE_PATH = Path(__file__).parent / ".cache" / "translations.json"
-SELECTION_CACHE_PREFIX = "sel:"
+SELECTION_CACHE_PREFIX = "sel:v4:"
 MAX_SELECTION_CHARS = 500
 
 PROMPT = """You are an English learning assistant. The user is typing Chinese using a Pinyin input method. The current Pinyin string is: {pinyin}
@@ -35,18 +35,35 @@ SELECTION_PROMPT = """You are an English learning assistant. The user selected t
 
 {text}
 
-Help them learn English:
-- If the text is primarily Chinese (or mixed with Chinese), translate it into natural English.
-- If the text is already English, keep a natural English phrasing (lightly polish if needed) and still show the Chinese meaning.
-- Match granularity: word→word, phrase→phrase, sentence→sentence.
+Goal: help the user learn English pronunciation with BOTH 谐音 (quick Chinese-character mnemonics) AND IPA (accurate phonetics). The user may glance at either.
 
-Return exactly one line in this format: English（中文）
+Detect the primary language, then:
+
+If primarily Chinese:
+- Translate into natural English (word→word, phrase→phrase, sentence→sentence).
+- Append full-width parentheses with 谐音 and 音标 for that English.
+- Format: English translation（谐音：词1 词2 …；音标：/IPA/）
+
+If primarily English:
+- Give the natural Chinese meaning (word→word, phrase→phrase, sentence→sentence).
+- Append full-width parentheses with 谐音 and 音标 for the original English the user selected.
+- Format: 中文译文（谐音：词1 词2 …；音标：/IPA/）
+
+谐音 rules:
+- Space-separated Chinese-character approximations, one group per English content word (skip a/an/the unless single-word input).
+- Memorable and spoken-like; may mix letters (e.g. Q) when helpful.
+
+音标 rules:
+- Standard IPA only; prefer General American; include stress marks.
+- One IPA string for the whole English line, words space-separated inside slashes.
+
 Examples:
-  apple（苹果）
-  significantly improve English proficiency（显著提升英语能力）
-  The weather is really nice today.（今天天气真好）
+  优化当前的文档格式 → Optimize the current document format（谐音：奥普提麦兹 卡润特 达Q门特 佛迈特；音标：/ˈɑːptɪmaɪz ðə ˈkɜːrənt ˈdɑːkjumənt ˈfɔːrmæt/）
+  Optimize the current document format → 优化当前的文档格式（谐音：奥普提麦兹 卡润特 达Q门特 佛迈特；音标：/ˈɑːptɪmaɪz ðə ˈkɜːrənt ˈdɑːkjumənt ˈfɔːrmæt/）
+  apple → 苹果（谐音：阿婆；音标：/ˈæpl/）
+  显著提升英语能力 → Significantly improve English proficiency（谐音：西格尼菲肯特 因普鲁夫 英格利什 普若菲申西；音标：/sɪɡˈnɪfɪkəntli ɪmˈpruːv ˈɪŋɡlɪʃ prəˈfɪʃnsi/）
 
-Output only this one line. No explanations."""
+Output exactly one line. No explanations."""
 
 
 class Translator:
@@ -87,7 +104,7 @@ class Translator:
         return self._translate_cached(
             cache_key=f"{SELECTION_CACHE_PREFIX}{text}",
             prompt=SELECTION_PROMPT.format(text=text),
-            max_tokens=120,
+            max_tokens=384,
         )
 
     def _translate_cached(self, *, cache_key: str, prompt: str, max_tokens: int) -> str:

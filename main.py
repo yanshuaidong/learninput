@@ -25,8 +25,12 @@ TRANSLATE_HOTKEY = os.getenv("TRANSLATE_HOTKEY", "alt+e")
 SELECTION_LABEL_MAX = 18
 
 WIN_W = 480
-MIN_WIN_H = 40
-MAX_WIN_H = 120
+LINE_HEIGHT = 20
+PANEL_V_PAD = 8
+COMPOSE_MAX_LINES = 3
+SELECTION_MAX_LINES = 12
+MIN_WIN_H = LINE_HEIGHT + PANEL_V_PAD
+MAX_WIN_H = SELECTION_MAX_LINES * LINE_HEIGHT + PANEL_V_PAD
 # 与当前输入行留出足够距离，避免面板压住文字或系统候选框。
 CARET_GAP = 16
 UI_FLUSH_MS = 30
@@ -310,8 +314,15 @@ class App:
         payload = ", ".join(json.dumps(arg, ensure_ascii=False) for arg in args)
         return self.window.evaluate_js(f"{fn}({payload})")
 
+    def _ui_max_lines(self) -> int:
+        if self._panel_mode == "selection":
+            return SELECTION_MAX_LINES
+        return COMPOSE_MAX_LINES
+
     def _run_js_and_resize(self, fn: str, *args) -> None:
-        preferred_height = self._run_js(fn, *args)
+        preferred_height = self._run_js(
+            fn, *args, self._panel_mode, self._ui_max_lines()
+        )
         if not self.window or preferred_height is None:
             return
 

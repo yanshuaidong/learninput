@@ -1,10 +1,21 @@
+const panelEl = document.getElementById("panel");
 const pinyinEl = document.getElementById("pinyin");
 const resultEl = document.getElementById("result");
 
-function preferredPanelHeight() {
+const LINE_HEIGHT = 20;
+const PANEL_V_PAD = 8;
+
+function applyPanelLayout(mode, maxLines) {
+  panelEl.dataset.mode = mode;
+  resultEl.style.webkitLineClamp = String(maxLines);
+}
+
+function preferredPanelHeight(mode, maxLines) {
+  applyPanelLayout(mode, maxLines);
+
   const width = resultEl.getBoundingClientRect().width;
   if (width <= 0) {
-    return 40;
+    return LINE_HEIGHT + PANEL_V_PAD;
   }
 
   const probe = resultEl.cloneNode(true);
@@ -23,32 +34,33 @@ function preferredPanelHeight() {
   document.body.appendChild(probe);
 
   const style = getComputedStyle(probe);
-  const lineHeight = parseFloat(style.lineHeight) || 20;
+  const lineHeight = parseFloat(style.lineHeight) || LINE_HEIGHT;
   const lines = Math.max(1, Math.ceil(probe.scrollHeight / lineHeight));
   probe.remove();
 
-  return Math.min(lines, 3) * 40;
+  const clamped = Math.min(lines, maxLines);
+  return clamped * lineHeight + PANEL_V_PAD;
 }
 
-function showComposing(pinyin) {
+function showComposing(pinyin, mode, maxLines) {
   pinyinEl.textContent = pinyin;
   if (!resultEl.classList.contains("error") && resultEl.dataset.ready !== "1") {
     resultEl.textContent = "…";
     resultEl.classList.add("loading");
   }
-  return preferredPanelHeight();
+  return preferredPanelHeight(mode, maxLines);
 }
 
-function setLoading(pinyin) {
+function setLoading(pinyin, mode, maxLines) {
   pinyinEl.textContent = pinyin;
   resultEl.textContent = "…";
   resultEl.dataset.ready = "0";
   resultEl.classList.add("loading");
   resultEl.classList.remove("error");
-  return preferredPanelHeight();
+  return preferredPanelHeight(mode, maxLines);
 }
 
-function updatePanel(pinyin, result) {
+function updatePanel(pinyin, result, mode, maxLines) {
   pinyinEl.textContent = pinyin;
 
   const isError =
@@ -60,15 +72,15 @@ function updatePanel(pinyin, result) {
   resultEl.dataset.ready = "1";
   resultEl.classList.remove("loading");
   resultEl.classList.toggle("error", isError);
-  return preferredPanelHeight();
+  return preferredPanelHeight(mode, maxLines);
 }
 
-function resetPanel() {
+function resetPanel(mode, maxLines) {
   pinyinEl.textContent = "—";
   resultEl.textContent = "…";
   resultEl.dataset.ready = "0";
   resultEl.classList.remove("loading", "error");
-  return preferredPanelHeight();
+  return preferredPanelHeight(mode, maxLines);
 }
 
 window.showComposing = showComposing;
