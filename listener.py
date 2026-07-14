@@ -4,6 +4,18 @@ from typing import Callable, Optional
 
 from pynput import keyboard
 
+# 按住这些修饰键时视为快捷键，不参与拼音组字（如 Cmd+C / Cmd+V）。
+_MODIFIER_KEYS = frozenset(
+    {
+        keyboard.Key.cmd,
+        keyboard.Key.cmd_r,
+        keyboard.Key.ctrl,
+        keyboard.Key.ctrl_r,
+        keyboard.Key.alt,
+        keyboard.Key.alt_r,
+    }
+)
+
 
 class PinyinListener:
     """旁听 a-z 按键，维护拼音 buffer。
@@ -32,9 +44,13 @@ class PinyinListener:
         self._timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
         self._listener: Optional[keyboard.Listener] = None
+        self._modifiers_held: set[keyboard.Key] = set()
 
     def start(self) -> None:
-        self._listener = keyboard.Listener(on_press=self._on_press)
+        self._listener = keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+        )
         self._listener.daemon = True
         self._listener.start()
 
@@ -97,7 +113,18 @@ class PinyinListener:
             self._cancel_timer()
             self.on_compose_end()
 
+    def _on_release(self, key) -> None:
+        if key in _MODIFIER_KEYS:
+            self._modifiers_held.discard(key)
+
     def _on_press(self, key) -> None:
+        if key in _MODIFIER_KEYS:
+            self._modifiers_held.add(key)
+            return
+
+        if self._modifiers_held:
+            return
+
         if key == keyboard.Key.backspace:
             self._pop_char()
             return
