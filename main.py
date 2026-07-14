@@ -20,7 +20,8 @@ from translator import Translator
 load_dotenv()
 
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
-DEBOUNCE_MS = int(os.getenv("DEBOUNCE_MS", "200"))
+DEBOUNCE_MS = int(os.getenv("DEBOUNCE_MS", "700"))
+MIN_PINYIN_LENGTH = int(os.getenv("MIN_PINYIN_LENGTH", "4"))
 TRANSLATE_HOTKEY = os.getenv("TRANSLATE_HOTKEY", "alt+e")
 SELECTION_LABEL_MAX = 18
 
@@ -353,6 +354,7 @@ class App:
             on_compose_end=self.on_compose_end,
             on_pause=self.on_pinyin_pause,
             debounce_ms=DEBOUNCE_MS,
+            min_length=MIN_PINYIN_LENGTH,
             on_translate_hotkey=self.on_translate_hotkey,
             translate_hotkey=TRANSLATE_HOTKEY,
             is_panel_visible=lambda: self._visible,

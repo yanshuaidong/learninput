@@ -11,7 +11,7 @@
               ↓
      Python 旁听 a-z，维护拼音 buffer
               ↓
-     停顿 400ms → 调 DeepSeek
+     停顿 700ms → 调 DeepSeek
               ↓
      HTML 浮动面板显示：window（窗户）
 ```
@@ -47,7 +47,8 @@ chmod +x start stop
 |------|------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API Key | 必填 |
 | `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com` |
-| `DEBOUNCE_MS` | 停顿触发毫秒数 | `400` |
+| `DEBOUNCE_MS` | 停顿触发毫秒数 | `700` |
+| `MIN_PINYIN_LENGTH` | 拼音最短长度，低于此值不请求 | `4` |
 | `TRANSLATE_HOTKEY` | 选中文案译英快捷键 | `alt+e`（Option+E） |
 
 释义结果会缓存到 `.cache/translations.json`，相同拼音不重复请求。
@@ -57,7 +58,7 @@ chmod +x start stop
 - 监听 `a-z`，累积拼音（如 `chuanghu`）
 - 空格、回车、Tab、标点 → 清空 buffer
 - 退格 → 删除最后一个字母
-- 停顿达到 `DEBOUNCE_MS` 且拼音长度 ≥ 2 → 请求释义
+- 停顿达到 `DEBOUNCE_MS` 且拼音长度 ≥ `MIN_PINYIN_LENGTH` → 请求释义
 
 ## 选中译英
 
