@@ -224,6 +224,64 @@ def get_caret_rect(*, prefer_selected: bool = False) -> Optional[CaretRect]:
         return _get_ime_candidate_anchor() or _get_mouse_fallback()
 
 
+def get_selected_text() -> Optional[str]:
+    """读取当前焦点控件中的选中文案（Accessibility）。"""
+    if platform.system() != "Darwin":
+        return None
+    try:
+        return _get_selected_text_ax()
+    except Exception:
+        return None
+
+
+def _get_selected_text_ax() -> Optional[str]:
+    import ApplicationServices as AS
+
+    system = AS.AXUIElementCreateSystemWide()
+    err, element = AS.AXUIElementCopyAttributeValue(
+        system, AS.kAXFocusedUIElementAttribute, None
+    )
+    if err != AS.kAXErrorSuccess or element is None:
+        return None
+
+    err, selected = AS.AXUIElementCopyAttributeValue(
+        element, AS.kAXSelectedTextAttribute, None
+    )
+    if err == AS.kAXErrorSuccess and selected:
+        text = str(selected).strip()
+        if text:
+            return text
+
+    err, range_val = AS.AXUIElementCopyAttributeValue(
+        element, AS.kAXSelectedTextRangeAttribute, None
+    )
+    if err != AS.kAXErrorSuccess or range_val is None:
+        return None
+
+    ok, selected_range = AS.AXValueGetValue(
+        range_val, AS.kAXValueCFRangeType, None
+    )
+    if not ok:
+        return None
+
+    location, length = selected_range
+    if length <= 0:
+        return None
+
+    err, value = AS.AXUIElementCopyAttributeValue(
+        element, AS.kAXValueAttribute, None
+    )
+    if err != AS.kAXErrorSuccess or value is None:
+        return None
+
+    full = str(value)
+    end = min(location + length, len(full))
+    if location < 0 or location >= len(full):
+        return None
+    text = full[location:end].strip()
+    return text or None
+
+
 def _get_caret_ax(*, prefer_selected: bool = False) -> Optional[CaretRect]:
     import ApplicationServices as AS
 

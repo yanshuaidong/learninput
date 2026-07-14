@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CACHE_PATH = Path(__file__).parent / ".cache" / "translations.json"
+SELECTION_CACHE_PREFIX = "sel:"
+MAX_SELECTION_CHARS = 500
+
 PROMPT = """You are an English learning assistant. The user is typing Chinese using a Pinyin input method. The current Pinyin string is: {pinyin}
 
 Step 1: Reconstruct the most likely Chinese text from the Pinyin.
@@ -27,6 +30,23 @@ Rules:
 - Match the granularity: word→word, phrase→phrase, sentence→sentence.
 - The Chinese part is the reconstructed original for reference only.
 - Output only this one line. No explanations, no extra punctuation."""
+
+SELECTION_PROMPT = """You are an English learning assistant. The user selected this text:
+
+{text}
+
+Help them learn English:
+- If the text is primarily Chinese (or mixed with Chinese), translate it into natural English.
+- If the text is already English, keep a natural English phrasing (lightly polish if needed) and still show the Chinese meaning.
+- Match granularity: word→word, phrase→phrase, sentence→sentence.
+
+Return exactly one line in this format: English（中文）
+Examples:
+  apple（苹果）
+  significantly improve English proficiency（显著提升英语能力）
+  The weather is really nice today.（今天天气真好）
+
+Output only this one line. No explanations."""
 
 
 class Translator:
@@ -52,7 +72,26 @@ class Translator:
         )
 
     def translate(self, pinyin: str) -> str:
-        cached = self._cache.get(pinyin)
+        return self._translate_cached(
+            cache_key=pinyin,
+            prompt=PROMPT.format(pinyin=pinyin),
+            max_tokens=64,
+        )
+
+    def translate_selection(self, text: str) -> str:
+        text = " ".join(text.split())
+        if not text:
+            return "未读到选中文案"
+        if len(text) > MAX_SELECTION_CHARS:
+            text = text[:MAX_SELECTION_CHARS].rstrip() + "…"
+        return self._translate_cached(
+            cache_key=f"{SELECTION_CACHE_PREFIX}{text}",
+            prompt=SELECTION_PROMPT.format(text=text),
+            max_tokens=120,
+        )
+
+    def _translate_cached(self, *, cache_key: str, prompt: str, max_tokens: int) -> str:
+        cached = self._cache.get(cache_key)
         if cached:
             return cached
 
@@ -60,26 +99,26 @@ class Translator:
             return "请配置 DEEPSEEK_API_KEY"
 
         try:
-            result = self._call_api(pinyin)
+            result = self._call_api(prompt, max_tokens=max_tokens)
         except Exception as exc:
             return f"请求失败：{exc}"
 
         if not result:
             return "翻译为空，请重试"
 
-        self._cache[pinyin] = result
+        self._cache[cache_key] = result
         self._save_cache()
         return result
 
-    def _call_api(self, pinyin: str) -> str:
+    def _call_api(self, prompt: str, *, max_tokens: int) -> str:
         payload = {
             "model": "deepseek-v4-flash",
             "messages": [
-                {"role": "user", "content": PROMPT.format(pinyin=pinyin)},
+                {"role": "user", "content": prompt},
             ],
             "thinking": {"type": "disabled"},
             "temperature": 0.2,
-            "max_tokens": 64,
+            "max_tokens": max_tokens,
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",

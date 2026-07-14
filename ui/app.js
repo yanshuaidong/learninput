@@ -53,7 +53,8 @@ function updatePanel(pinyin, result) {
 
   const isError =
     result.startsWith("请求失败") ||
-    result.startsWith("请配置");
+    result.startsWith("请配置") ||
+    result.startsWith("未读到");
 
   resultEl.textContent = result;
   resultEl.dataset.ready = "1";

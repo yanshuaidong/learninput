@@ -48,6 +48,7 @@ chmod +x start stop
 | `DEEPSEEK_API_KEY` | DeepSeek API Key | 必填 |
 | `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com` |
 | `DEBOUNCE_MS` | 停顿触发毫秒数 | `400` |
+| `TRANSLATE_HOTKEY` | 选中文案译英快捷键 | `alt+e`（Option+E） |
 
 释义结果会缓存到 `.cache/translations.json`，相同拼音不重复请求。
 
@@ -57,6 +58,20 @@ chmod +x start stop
 - 空格、回车、Tab、标点 → 清空 buffer
 - 退格 → 删除最后一个字母
 - 停顿达到 `DEBOUNCE_MS` 且拼音长度 ≥ 2 → 请求释义
+
+## 选中译英
+
+1. 用鼠标选中文案（输入框 / 网页 / App，取决于系统无障碍是否暴露选区）
+2. 按快捷键（默认 `Option+E`，即 `TRANSLATE_HOTKEY=alt+e`）
+3. 浮动面板显示：`English（中文）`
+
+**面板消失**（与拼音组字一致）：
+
+- `Esc` / `空格` / `回车` / `Tab` / 标点 → 关闭面板
+- 开始输入拼音 → 关闭选中面板，切换为组字模式
+- 再次按翻译快捷键 → 刷新翻译内容
+
+可在 `.env` 里改快捷键，例如 `ctrl+shift+t`、`cmd+shift+e`。
 
 ## 项目结构
 

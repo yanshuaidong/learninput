@@ -7,7 +7,12 @@ import time
 import webview
 from dotenv import load_dotenv
 
-from caret import debug_caret_snapshot, get_caret_rect, panel_position
+from caret import (
+    debug_caret_snapshot,
+    get_caret_rect,
+    get_selected_text,
+    panel_position,
+)
 from listener import PinyinListener
 from panel_mac import hide_panel, show_debug_caret_box, show_without_focus
 from translator import Translator
@@ -16,6 +21,8 @@ load_dotenv()
 
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 DEBOUNCE_MS = int(os.getenv("DEBOUNCE_MS", "200"))
+TRANSLATE_HOTKEY = os.getenv("TRANSLATE_HOTKEY", "alt+e")
+SELECTION_LABEL_MAX = 18
 
 WIN_W = 480
 MIN_WIN_H = 40
@@ -64,8 +71,14 @@ class App:
         self._caret_monitor_stop = threading.Event()
         self._caret_monitor: threading.Thread | None = None
         self._debug_probe_samples = 0
+        self._anchor_selected = False
+        self._panel_mode = "idle"
 
     def on_compose(self, pinyin: str) -> None:
+        if self._panel_mode == "selection":
+            self._dismiss_panel()
+        self._panel_mode = "composing"
+        self._anchor_selected = False
         if pinyin == "aaa":
             self._debug_probe_samples = 4
         with self._timers_lock:
@@ -73,7 +86,12 @@ class App:
             self._schedule_ui_flush_locked()
 
     def on_compose_end(self) -> None:
+        self._dismiss_panel()
+
+    def _dismiss_panel(self) -> None:
         self._compose_gen += 1
+        self._anchor_selected = False
+        self._panel_mode = "idle"
         self._cancel_ui_flush()
         self._hide()
         self._run_js_and_resize("resetPanel")
@@ -87,6 +105,35 @@ class App:
             if gen != self._compose_gen:
                 return
             self._run_js_and_resize("updatePanel", pinyin, result)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_translate_hotkey(self) -> None:
+        text = get_selected_text()
+        self._compose_gen += 1
+        gen = self._compose_gen
+        self._panel_mode = "selection"
+        self._anchor_selected = True
+        self._cancel_ui_flush()
+
+        if not text:
+            self._run_js_and_resize(
+                "updatePanel",
+                "选中",
+                "未读到选中文案（可重试，或检查辅助功能权限）",
+            )
+            self._show()
+            return
+
+        label = text if len(text) <= SELECTION_LABEL_MAX else text[:SELECTION_LABEL_MAX] + "…"
+        self._run_js_and_resize("setLoading", label)
+        self._show()
+
+        def work():
+            result = self.translator.translate_selection(text)
+            if gen != self._compose_gen:
+                return
+            self._run_js_and_resize("updatePanel", label, result)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -157,11 +204,16 @@ class App:
         y = max(y_min, min(y, y_max))
         return x, y
 
+    def _prefer_selected_anchor(self) -> bool:
+        if self._anchor_selected:
+            return True
+        # 面板隐藏通常表示组字已提交。此时优先读取真实插入点，
+        # 避免部分应用残留的 AXMarkedTextRange 把位置锁在上一行。
+        return not self._visible
+
     def _monitor_caret(self) -> None:
         while not self._caret_monitor_stop.is_set():
-            # 面板隐藏通常表示组字已提交。此时优先读取真实插入点，
-            # 避免部分应用残留的 AXMarkedTextRange 把位置锁在上一行。
-            rect = get_caret_rect(prefer_selected=not self._visible)
+            rect = get_caret_rect(prefer_selected=self._prefer_selected_anchor())
             if rect:
                 position = self._calculate_panel_position(rect)
 
@@ -227,7 +279,7 @@ class App:
 
         # 仿照 IMK 候选框：显示前先向宿主读取一次最新插入点，
         # 避免后台轮询尚未完成时窗口在默认位置闪现。
-        rect = get_caret_rect(prefer_selected=False)
+        rect = get_caret_rect(prefer_selected=self._prefer_selected_anchor())
         if rect:
             position = self._calculate_panel_position(rect)
             with self._position_lock:
@@ -275,7 +327,7 @@ class App:
         self.window.resize(WIN_W, height)
 
         # 高度变化后立即重新锚定，避免面板向上扩展时偏离当前光标。
-        rect = get_caret_rect(prefer_selected=not self._visible)
+        rect = get_caret_rect(prefer_selected=self._prefer_selected_anchor())
         if not rect:
             return
         position = self._calculate_panel_position(rect)
@@ -290,6 +342,9 @@ class App:
             on_compose_end=self.on_compose_end,
             on_pause=self.on_pinyin_pause,
             debounce_ms=DEBOUNCE_MS,
+            on_translate_hotkey=self.on_translate_hotkey,
+            translate_hotkey=TRANSLATE_HOTKEY,
+            is_panel_visible=lambda: self._visible,
         )
         self._listener.start()
 
