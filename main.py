@@ -18,7 +18,8 @@ UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 DEBOUNCE_MS = int(os.getenv("DEBOUNCE_MS", "200"))
 
 WIN_W = 480
-WIN_H = 40
+MIN_WIN_H = 40
+MAX_WIN_H = 120
 # 与当前输入行留出足够距离，避免面板压住文字或系统候选框。
 CARET_GAP = 16
 UI_FLUSH_MS = 30
@@ -58,6 +59,7 @@ class App:
         self._ui_timer: threading.Timer | None = None
         self._timers_lock = threading.Lock()
         self._panel_position: tuple[int, int] | None = None
+        self._panel_height = MIN_WIN_H
         self._position_lock = threading.Lock()
         self._caret_monitor_stop = threading.Event()
         self._caret_monitor: threading.Thread | None = None
@@ -74,17 +76,17 @@ class App:
         self._compose_gen += 1
         self._cancel_ui_flush()
         self._hide()
-        self._run_js("resetPanel")
+        self._run_js_and_resize("resetPanel")
 
     def on_pinyin_pause(self, pinyin: str) -> None:
         gen = self._compose_gen
-        self._run_js("setLoading", pinyin)
+        self._run_js_and_resize("setLoading", pinyin)
 
         def work():
             result = self.translator.translate(pinyin)
             if gen != self._compose_gen:
                 return
-            self._run_js("updatePanel", pinyin, result)
+            self._run_js_and_resize("updatePanel", pinyin, result)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -111,22 +113,23 @@ class App:
         if not pinyin:
             return
 
-        self._run_js("showComposing", pinyin)
+        self._run_js_and_resize("showComposing", pinyin)
         self._show()
 
     def _calculate_panel_position(self, rect) -> tuple[int, int]:
+        panel_height = self._panel_height
         try:
             from AppKit import NSScreen
         except ImportError:
             x, y = panel_position(
-                rect, WIN_W, WIN_H, CARET_GAP, visible_top=0
+                rect, WIN_W, panel_height, CARET_GAP, visible_top=0
             )
             return x, max(y, 0)
 
         screen = NSScreen.mainScreen()
         if screen is None:
             x, y = panel_position(
-                rect, WIN_W, WIN_H, CARET_GAP, visible_top=0
+                rect, WIN_W, panel_height, CARET_GAP, visible_top=0
             )
             return x, max(y, 0)
 
@@ -139,12 +142,12 @@ class App:
         x_min = int(visible.origin.x)
         x_max = int(visible.origin.x + visible.size.width - WIN_W)
         y_min = int(screen_h - (visible.origin.y + visible.size.height))
-        y_max = int(screen_h - visible.origin.y - WIN_H)
+        y_max = int(screen_h - visible.origin.y - panel_height)
 
         x, y = panel_position(
             rect,
             WIN_W,
-            WIN_H,
+            panel_height,
             CARET_GAP,
             visible_top=y_min,
             visible_bottom=y_max,
@@ -249,11 +252,36 @@ class App:
             self.window.hide()
         self._visible = False
 
-    def _run_js(self, fn: str, *args) -> None:
+    def _run_js(self, fn: str, *args) -> object | None:
         if not self.window:
-            return
+            return None
         payload = ", ".join(json.dumps(arg, ensure_ascii=False) for arg in args)
-        self.window.evaluate_js(f"{fn}({payload})")
+        return self.window.evaluate_js(f"{fn}({payload})")
+
+    def _run_js_and_resize(self, fn: str, *args) -> None:
+        preferred_height = self._run_js(fn, *args)
+        if not self.window or preferred_height is None:
+            return
+
+        try:
+            height = int(preferred_height)
+        except (TypeError, ValueError):
+            return
+        height = max(MIN_WIN_H, min(height, MAX_WIN_H))
+        if height == self._panel_height:
+            return
+
+        self._panel_height = height
+        self.window.resize(WIN_W, height)
+
+        # 高度变化后立即重新锚定，避免面板向上扩展时偏离当前光标。
+        rect = get_caret_rect(prefer_selected=not self._visible)
+        if not rect:
+            return
+        position = self._calculate_panel_position(rect)
+        with self._position_lock:
+            self._panel_position = position
+        self.window.move(*position)
 
     def start_listener(self) -> None:
         self._start_caret_monitor()
@@ -279,7 +307,7 @@ def main() -> None:
         title="learninput",
         url=os.path.join(UI_DIR, "index.html"),
         width=WIN_W,
-        height=WIN_H,
+        height=MIN_WIN_H,
         x=None,
         y=None,
         resizable=False,
