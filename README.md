@@ -50,6 +50,7 @@ chmod +x start stop
 | `DEBOUNCE_MS` | 停顿触发毫秒数 | `700` |
 | `MIN_PINYIN_LENGTH` | 拼音最短长度，低于此值不请求 | `4` |
 | `TRANSLATE_HOTKEY` | 选中文案译英快捷键 | `alt+e`（Option+E） |
+| `ACCEPT_HOTKEY` | 采纳当前英文翻译并粘贴 | `alt+enter`（Option+回车） |
 
 释义结果会缓存到 `.cache/translations.json`，相同拼音不重复请求。
 
@@ -74,6 +75,27 @@ chmod +x start stop
 
 可在 `.env` 里改快捷键，例如 `ctrl+shift+t`、`cmd+shift+e`。
 
+## 采纳英文
+
+拼音组字面板显示英文翻译后，可按快捷键将英文直接粘贴进输入框（不劫持输入法，仅在采纳时短暂介入）：
+
+1. 正常输入拼音，例如 `wozuotiangangdaobeijing`
+2. 停顿后面板显示：`I just arrived in Beijing yesterday（我昨天刚到北京）`
+3. 按 **Option+回车**（默认 `ACCEPT_HOTKEY=alt+enter`）
+4. 工具会发送 `Esc` 取消输入法组字，再通过剪贴板粘贴英文
+
+**与正常上屏的关系：**
+
+- 按 **空格** → 仍由输入法上屏中文，面板消失（原有行为不变）
+- 按 **Option+回车** → 上屏英文，面板消失
+- 翻译尚未返回（loading）或报错时，采纳键无效
+
+**限制：**
+
+- 采纳时会短暂占用剪贴板（约 100ms 后自动恢复）
+- 需要与旁听相同的辅助功能权限
+- 少数不响应粘贴的输入控件可能无法采纳
+
 ## 项目结构
 
 ```
@@ -82,6 +104,7 @@ learninput/
 ├── stop              # 停止脚本
 ├── main.py           # 入口
 ├── listener.py       # 键盘旁听 + 防抖
+├── injector.py       # 采纳英文：Esc + 剪贴板粘贴
 ├── translator.py     # DeepSeek + 缓存
 ├── ui/
 │   ├── index.html

@@ -5,6 +5,8 @@ from typing import Callable, FrozenSet, Optional
 
 from pynput import keyboard
 
+from injector import is_injecting
+
 # 按住这些修饰键时视为快捷键，不参与拼音组字（如 Cmd+C / Cmd+V）。
 _MODIFIER_KEYS = frozenset(
     {
@@ -35,6 +37,10 @@ _HOTKEY_MOD_ALIAS = {
     "opt": "alt",
     "command": "cmd",
     "control": "ctrl",
+}
+
+_HOTKEY_KEY_ALIAS = {
+    "return": "enter",
 }
 
 # macOS ANSI 虚拟键码；Option 会改 char，但 vk 通常不变。
@@ -80,7 +86,7 @@ def parse_hotkey(spec: str) -> HotkeyBinding:
     if len(parts) < 2:
         raise ValueError(f"快捷键至少需要修饰键+主键，例如 alt+e，收到：{spec!r}")
 
-    key = parts[-1]
+    key = _HOTKEY_KEY_ALIAS.get(parts[-1], parts[-1])
     mods = frozenset(_HOTKEY_MOD_ALIAS.get(m, m) for m in parts[:-1])
     return HotkeyBinding(modifiers=mods, key=key)
 
@@ -94,6 +100,7 @@ class PinyinListener:
     - 停顿 → on_pause（查询释义，面板仍可见）
     - 空格 / 回车 / Esc / 标点 / 数字选词 → on_compose_end（面板消失）
     - 翻译快捷键 → on_translate_hotkey（选中文案译英）
+    - 采纳快捷键 → on_accept_hotkey（粘贴当前英文翻译）
     """
 
     def __init__(
@@ -105,12 +112,15 @@ class PinyinListener:
         min_length: int = 2,
         on_translate_hotkey: Optional[Callable[[], None]] = None,
         translate_hotkey: str = "alt+e",
+        on_accept_hotkey: Optional[Callable[[], None]] = None,
+        accept_hotkey: str = "alt+enter",
         is_panel_visible: Optional[Callable[[], bool]] = None,
     ):
         self.on_compose = on_compose
         self.on_compose_end = on_compose_end
         self.on_pause = on_pause
         self.on_translate_hotkey = on_translate_hotkey
+        self.on_accept_hotkey = on_accept_hotkey
         self.is_panel_visible = is_panel_visible or (lambda: False)
         self.debounce_ms = debounce_ms
         self.min_length = min_length
@@ -119,9 +129,12 @@ class PinyinListener:
         self._lock = threading.Lock()
         self._listener: Optional[keyboard.Listener] = None
         self._modifiers_held: set[keyboard.Key] = set()
-        self._hotkey_binding: Optional[HotkeyBinding] = None
+        self._translate_hotkey_binding: Optional[HotkeyBinding] = None
+        self._accept_hotkey_binding: Optional[HotkeyBinding] = None
         if on_translate_hotkey and translate_hotkey.strip():
-            self._hotkey_binding = parse_hotkey(translate_hotkey)
+            self._translate_hotkey_binding = parse_hotkey(translate_hotkey)
+        if on_accept_hotkey and accept_hotkey.strip():
+            self._accept_hotkey_binding = parse_hotkey(accept_hotkey)
 
     def start(self) -> None:
         self._listener = keyboard.Listener(
@@ -146,11 +159,11 @@ class PinyinListener:
     def _modifiers_match(self, required: FrozenSet[str]) -> bool:
         return self._held_modifier_names() == set(required)
 
-    def _key_matches_binding(self, key) -> bool:
-        if not self._hotkey_binding:
+    def _key_matches_binding(self, key, binding: Optional[HotkeyBinding]) -> bool:
+        if not binding:
             return False
 
-        target = self._hotkey_binding.key
+        target = binding.key
         char = getattr(key, "char", None)
         if char and char.lower() == target:
             return True
@@ -160,16 +173,31 @@ class PinyinListener:
             return True
 
         name = getattr(key, "name", None)
-        return bool(name and name.lower() == target)
+        if name and name.lower() == target:
+            return True
+
+        if target == "enter" and key == keyboard.Key.enter:
+            return True
+
+        return False
+
+    def _clear_buffer_locked(self) -> None:
+        self._buffer = ""
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
 
     def _fire_translate_hotkey(self) -> None:
         with self._lock:
-            self._buffer = ""
-            if self._timer:
-                self._timer.cancel()
-                self._timer = None
+            self._clear_buffer_locked()
         if self.on_translate_hotkey:
             self.on_translate_hotkey()
+
+    def _fire_accept_hotkey(self) -> None:
+        with self._lock:
+            self._clear_buffer_locked()
+        if self.on_accept_hotkey:
+            self.on_accept_hotkey()
 
     def _cancel_timer(self) -> None:
         with self._lock:
@@ -228,15 +256,26 @@ class PinyinListener:
             self._modifiers_held.discard(key)
 
     def _on_press(self, key) -> None:
+        if is_injecting():
+            return
+
         if key in _MODIFIER_KEYS:
             self._modifiers_held.add(key)
             return
 
         if self._modifiers_held:
             if (
-                self._hotkey_binding
-                and self._modifiers_match(self._hotkey_binding.modifiers)
-                and self._key_matches_binding(key)
+                self._accept_hotkey_binding
+                and self._modifiers_match(self._accept_hotkey_binding.modifiers)
+                and self._key_matches_binding(key, self._accept_hotkey_binding)
+            ):
+                self._fire_accept_hotkey()
+                return
+
+            if (
+                self._translate_hotkey_binding
+                and self._modifiers_match(self._translate_hotkey_binding.modifiers)
+                and self._key_matches_binding(key, self._translate_hotkey_binding)
             ):
                 self._fire_translate_hotkey()
             return

@@ -13,6 +13,7 @@ from caret import (
     get_selected_text,
     panel_position,
 )
+from injector import accept_english
 from listener import PinyinListener
 from panel_mac import hide_panel, show_debug_caret_box, show_without_focus
 from translator import Translator
@@ -23,7 +24,10 @@ UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 DEBOUNCE_MS = int(os.getenv("DEBOUNCE_MS", "700"))
 MIN_PINYIN_LENGTH = int(os.getenv("MIN_PINYIN_LENGTH", "4"))
 TRANSLATE_HOTKEY = os.getenv("TRANSLATE_HOTKEY", "alt+e")
+ACCEPT_HOTKEY = os.getenv("ACCEPT_HOTKEY", "alt+enter")
 SELECTION_LABEL_MAX = 18
+
+_ERROR_PREFIXES = ("请求失败", "请配置", "未读到", "翻译为空")
 
 WIN_W = 480
 LINE_HEIGHT = 20
@@ -60,6 +64,15 @@ def _write_debug_log(message: str, data: dict, hypothesis_id: str) -> None:
 # endregion
 
 
+def parse_english_from_result(result: str) -> str | None:
+    text = result.strip()
+    if not text or any(text.startswith(prefix) for prefix in _ERROR_PREFIXES):
+        return None
+    if "（" in text:
+        text = text.split("（", 1)[0].strip()
+    return text or None
+
+
 class App:
     def __init__(self):
         self.window = None
@@ -78,12 +91,23 @@ class App:
         self._debug_probe_samples = 0
         self._anchor_selected = False
         self._panel_mode = "idle"
+        self._compose_pinyin = ""
+        self._compose_english: str | None = None
+        self._compose_ready = False
+
+    def _reset_compose_state(self) -> None:
+        self._compose_pinyin = ""
+        self._compose_english = None
+        self._compose_ready = False
 
     def on_compose(self, pinyin: str) -> None:
         if self._panel_mode == "selection":
             self._dismiss_panel()
         self._panel_mode = "composing"
         self._anchor_selected = False
+        self._compose_pinyin = pinyin
+        self._compose_english = None
+        self._compose_ready = False
         if pinyin == "aaa":
             self._debug_probe_samples = 4
         with self._timers_lock:
@@ -97,21 +121,47 @@ class App:
         self._compose_gen += 1
         self._anchor_selected = False
         self._panel_mode = "idle"
+        self._reset_compose_state()
         self._cancel_ui_flush()
         self._hide()
         self._run_js_and_resize("resetPanel")
 
     def on_pinyin_pause(self, pinyin: str) -> None:
         gen = self._compose_gen
+        self._compose_pinyin = pinyin
+        self._compose_english = None
+        self._compose_ready = False
         self._run_js_and_resize("setLoading", pinyin)
 
         def work():
             result = self.translator.translate(pinyin)
             if gen != self._compose_gen:
                 return
+            english = parse_english_from_result(result)
+            self._compose_english = english
+            self._compose_ready = english is not None
             self._run_js_and_resize("updatePanel", pinyin, result)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def on_accept_hotkey(self) -> None:
+        if self._panel_mode != "composing":
+            return
+        if not self._compose_ready or not self._compose_english:
+            return
+
+        english = self._compose_english
+        pinyin = self._compose_pinyin or "—"
+        if accept_english(english):
+            self._dismiss_panel()
+            return
+
+        self._run_js_and_resize(
+            "updatePanel",
+            pinyin,
+            "采纳失败，请检查辅助功能权限",
+        )
+        self._show()
 
     def on_translate_hotkey(self) -> None:
         text = get_selected_text()
@@ -119,6 +169,7 @@ class App:
         gen = self._compose_gen
         self._panel_mode = "selection"
         self._anchor_selected = True
+        self._reset_compose_state()
         self._cancel_ui_flush()
 
         if not text:
@@ -357,6 +408,8 @@ class App:
             min_length=MIN_PINYIN_LENGTH,
             on_translate_hotkey=self.on_translate_hotkey,
             translate_hotkey=TRANSLATE_HOTKEY,
+            on_accept_hotkey=self.on_accept_hotkey,
+            accept_hotkey=ACCEPT_HOTKEY,
             is_panel_visible=lambda: self._visible,
         )
         self._listener.start()
