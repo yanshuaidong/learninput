@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CACHE_PATH = Path(__file__).parent / ".cache" / "translations.json"
-PINYIN_CACHE_PREFIX = "py:v6:"
-SELECTION_CACHE_PREFIX = "sel:v6:"
+PINYIN_CACHE_PREFIX = "py:v7:"
+SELECTION_CACHE_PREFIX = "sel:v7:"
 MAX_SELECTION_CHARS = 500
 
 PROMPT = """You are an English learning assistant. The user is typing Chinese using a Pinyin input method. The current Pinyin string is: {pinyin}
@@ -93,7 +93,7 @@ class Translator:
         return self._translate_cached(
             cache_key=f"{PINYIN_CACHE_PREFIX}{pinyin}",
             prompt=PROMPT.format(pinyin=pinyin),
-            max_tokens=256,
+            max_tokens=128,
         )
 
     def translate_selection(self, text: str) -> str:
@@ -105,7 +105,7 @@ class Translator:
         return self._translate_cached(
             cache_key=f"{SELECTION_CACHE_PREFIX}{text}",
             prompt=SELECTION_PROMPT.format(text=text),
-            max_tokens=768,
+            max_tokens=512,
         )
 
     def _translate_cached(self, *, cache_key: str, prompt: str, max_tokens: int) -> str:
@@ -134,8 +134,7 @@ class Translator:
             "messages": [
                 {"role": "user", "content": prompt},
             ],
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
+            "thinking": {"type": "disabled"},
             "temperature": 0.2,
             "max_tokens": max_tokens,
         }
@@ -144,7 +143,7 @@ class Translator:
             "Content-Type": "application/json",
         }
 
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 f"{self.base_url}/chat/completions",
                 headers=headers,
