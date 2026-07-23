@@ -234,6 +234,76 @@ def get_selected_text() -> Optional[str]:
         return None
 
 
+_CLIPBOARD_TEXT_TYPES = (
+    "public.utf8-plain-text",
+    "public.plain-text",
+    "NSStringPboardType",
+)
+
+_CLIPBOARD_NON_TEXT_TYPES = (
+    "public.png",
+    "public.tiff",
+    "NSFilenamesPboardType",
+    "public.file-url",
+)
+
+
+def _pasteboard_types() -> frozenset[str]:
+    from AppKit import NSPasteboard
+
+    pasteboard = NSPasteboard.generalPasteboard()
+    return frozenset(str(item) for item in (pasteboard.types() or ()))
+
+
+def is_clipboard_plain_text() -> bool:
+    """剪贴板是否包含可用的纯文本（排除仅有图片/文件的情况）。"""
+    if platform.system() != "Darwin":
+        return False
+    try:
+        types = _pasteboard_types()
+    except Exception:
+        return False
+    if any(text_type in types for text_type in _CLIPBOARD_TEXT_TYPES):
+        return True
+    return not any(non_text_type in types for non_text_type in _CLIPBOARD_NON_TEXT_TYPES)
+
+
+def get_clipboard_text() -> Optional[str]:
+    """读取系统剪贴板中的纯文本。"""
+    if platform.system() != "Darwin" or not is_clipboard_plain_text():
+        return None
+    try:
+        from AppKit import NSPasteboard
+
+        pasteboard = NSPasteboard.generalPasteboard()
+        for text_type in _CLIPBOARD_TEXT_TYPES:
+            value = pasteboard.stringForType_(text_type)
+            if value:
+                text = str(value).strip()
+                if text:
+                    return text
+    except Exception:
+        return None
+    return None
+
+
+def write_clipboard_text(text: str) -> None:
+    """写入纯文本到系统剪贴板。"""
+    from AppKit import NSPasteboard
+
+    pasteboard = NSPasteboard.generalPasteboard()
+    pasteboard.clearContents()
+    pasteboard.setString_forType_(text, "public.utf8-plain-text")
+
+
+def resolve_selection_text() -> Optional[str]:
+    """AX 选中文案优先，读不到时回退剪贴板纯文本。"""
+    text = get_selected_text()
+    if text:
+        return text
+    return get_clipboard_text()
+
+
 def _get_selected_text_ax() -> Optional[str]:
     import ApplicationServices as AS
 

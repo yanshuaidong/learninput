@@ -8,6 +8,8 @@ import time
 
 from pynput import keyboard
 
+from caret import get_clipboard_text, write_clipboard_text
+
 _INJECT_DELAY_S = 0.04
 _RESTORE_DELAY_S = 0.08
 
@@ -36,8 +38,8 @@ def accept_english(text: str) -> bool:
 
     saved_clipboard: str | None = None
     try:
-        saved_clipboard = _read_clipboard()
-        _write_clipboard(cleaned)
+        saved_clipboard = get_clipboard_text()
+        write_clipboard_text(cleaned)
         _controller.press(keyboard.Key.esc)
         _controller.release(keyboard.Key.esc)
         time.sleep(_INJECT_DELAY_S)
@@ -51,23 +53,8 @@ def accept_english(text: str) -> bool:
         time.sleep(_RESTORE_DELAY_S)
         if saved_clipboard is not None:
             try:
-                _write_clipboard(saved_clipboard)
+                write_clipboard_text(saved_clipboard)
             except Exception:
                 pass
         with _inject_lock:
             _injecting = False
-
-
-def _read_clipboard() -> str | None:
-    from AppKit import NSPasteboard
-
-    pasteboard = NSPasteboard.generalPasteboard()
-    return pasteboard.stringForType_("public.utf8-plain-text")
-
-
-def _write_clipboard(text: str) -> None:
-    from AppKit import NSPasteboard
-
-    pasteboard = NSPasteboard.generalPasteboard()
-    pasteboard.clearContents()
-    pasteboard.setString_forType_(text, "public.utf8-plain-text")

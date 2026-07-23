@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from caret import (
     debug_caret_snapshot,
     get_caret_rect,
-    get_selected_text,
+    resolve_selection_text,
     panel_position,
 )
 from injector import accept_english
@@ -164,7 +164,7 @@ class App:
         self._show()
 
     def on_translate_hotkey(self) -> None:
-        text = get_selected_text()
+        text = resolve_selection_text()
         self._compose_gen += 1
         gen = self._compose_gen
         self._panel_mode = "selection"
@@ -176,7 +176,7 @@ class App:
             self._run_js_and_resize(
                 "updatePanel",
                 "选中",
-                "未读到选中文案（可重试，或检查辅助功能权限）",
+                "未读到选中文案（可先将词复制到剪贴板后重试，或检查辅助功能权限）",
             )
             self._show()
             return
