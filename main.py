@@ -8,6 +8,7 @@ import webview
 from dotenv import load_dotenv
 
 from caret import (
+    _autorelease_pool,
     debug_caret_snapshot,
     get_caret_rect,
     resolve_selection_text,
@@ -15,6 +16,7 @@ from caret import (
 )
 from injector import accept_english
 from listener import PinyinListener
+from memory_watch import MemoryWatch
 from panel_mac import hide_panel, show_debug_caret_box, show_without_focus
 from translator import Translator
 
@@ -40,6 +42,13 @@ MAX_WIN_H = SELECTION_MAX_LINES * LINE_HEIGHT + PANEL_V_PAD
 CARET_GAP = 16
 UI_FLUSH_MS = 30
 CARET_POLL_MS = int(os.getenv("CARET_POLL_MS", "50"))
+# 面板隐藏时不必高频读 AX；显示前 _show 会再取一次光标。
+CARET_POLL_HIDDEN_MS = int(os.getenv("CARET_POLL_HIDDEN_MS", "500"))
+MEMORY_LOG_INTERVAL_S = int(os.getenv("MEMORY_LOG_INTERVAL_S", str(24 * 60 * 60)))
+MEMORY_LOG_PATH = os.getenv(
+    "MEMORY_LOG_PATH",
+    os.path.join(os.path.dirname(__file__), "logs", "memory.log"),
+)
 DEBUG_LOG_PATH = os.path.join(
     os.path.dirname(__file__), ".cursor", "debug-fa4dbd.log"
 )
@@ -88,6 +97,7 @@ class App:
         self._position_lock = threading.Lock()
         self._caret_monitor_stop = threading.Event()
         self._caret_monitor: threading.Thread | None = None
+        self._memory_watch: MemoryWatch | None = None
         self._debug_probe_samples = 0
         self._anchor_selected = False
         self._panel_mode = "idle"
@@ -269,52 +279,63 @@ class App:
 
     def _monitor_caret(self) -> None:
         while not self._caret_monitor_stop.is_set():
-            rect = get_caret_rect(prefer_selected=self._prefer_selected_anchor())
-            if rect:
-                position = self._calculate_panel_position(rect)
+            active = self._visible or self._debug_probe_samples > 0
+            if active:
+                with _autorelease_pool():
+                    self._poll_caret_once()
+                interval_ms = CARET_POLL_MS
+            else:
+                # 隐藏时跳过 AX/Quartz，避免后台线程对象堆积。
+                interval_ms = CARET_POLL_HIDDEN_MS
 
-                if self._debug_probe_samples > 0:
-                    sample = 5 - self._debug_probe_samples
-                    try:
-                        snapshot = debug_caret_snapshot()
-                    except Exception as exc:
-                        snapshot = {
-                            "probe_error": type(exc).__name__,
-                            "probe_message": str(exc),
-                        }
-                    # region agent log
-                    _write_debug_log(
-                        "aaa 光标定位采样",
-                        {
-                            "sample": sample,
-                            "visible": self._visible,
-                            "chosen": {
-                                "x": rect.x,
-                                "y": rect.y,
-                                "width": rect.width,
-                                "height": rect.height,
-                            },
-                            "panel_position": {
-                                "x": position[0],
-                                "y": position[1],
-                            },
-                            "candidates": snapshot,
-                        },
-                        "H1-H5",
-                    )
-                    # endregion
-                    show_debug_caret_box(rect)
-                    self._debug_probe_samples -= 1
+            self._caret_monitor_stop.wait(interval_ms / 1000)
 
-                with self._position_lock:
-                    changed = position != self._panel_position
-                    self._panel_position = position
+    def _poll_caret_once(self) -> None:
+        rect = get_caret_rect(prefer_selected=self._prefer_selected_anchor())
+        if not rect:
+            return
 
-                # 隐藏时也提前移动，显示时窗口已在最新光标附近。
-                if changed and self.window:
-                    self.window.move(*position)
+        position = self._calculate_panel_position(rect)
 
-            self._caret_monitor_stop.wait(CARET_POLL_MS / 1000)
+        if self._debug_probe_samples > 0:
+            sample = 5 - self._debug_probe_samples
+            try:
+                snapshot = debug_caret_snapshot()
+            except Exception as exc:
+                snapshot = {
+                    "probe_error": type(exc).__name__,
+                    "probe_message": str(exc),
+                }
+            # region agent log
+            _write_debug_log(
+                "aaa 光标定位采样",
+                {
+                    "sample": sample,
+                    "visible": self._visible,
+                    "chosen": {
+                        "x": rect.x,
+                        "y": rect.y,
+                        "width": rect.width,
+                        "height": rect.height,
+                    },
+                    "panel_position": {
+                        "x": position[0],
+                        "y": position[1],
+                    },
+                    "candidates": snapshot,
+                },
+                "H1-H5",
+            )
+            # endregion
+            show_debug_caret_box(rect)
+            self._debug_probe_samples -= 1
+
+        with self._position_lock:
+            changed = position != self._panel_position
+            self._panel_position = position
+
+        if changed and self.window:
+            self.window.move(*position)
 
     def _start_caret_monitor(self) -> None:
         if self._caret_monitor and self._caret_monitor.is_alive():
@@ -400,6 +421,7 @@ class App:
 
     def start_listener(self) -> None:
         self._start_caret_monitor()
+        self._start_memory_watch()
         self._listener = PinyinListener(
             on_compose=self.on_compose,
             on_compose_end=self.on_compose_end,
@@ -418,6 +440,22 @@ class App:
         if self._listener:
             self._listener.stop()
         self._stop_caret_monitor()
+        self._stop_memory_watch()
+
+    def _start_memory_watch(self) -> None:
+        if self._memory_watch:
+            return
+        self._memory_watch = MemoryWatch(
+            log_path=MEMORY_LOG_PATH,
+            interval_s=MEMORY_LOG_INTERVAL_S,
+            is_panel_visible=lambda: self._visible,
+        )
+        self._memory_watch.start()
+
+    def _stop_memory_watch(self) -> None:
+        if self._memory_watch:
+            self._memory_watch.stop()
+            self._memory_watch = None
 
 
 app = App()

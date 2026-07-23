@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import platform
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,29 @@ class CaretRect:
     y: float
     width: float
     height: float
+
+
+@contextmanager
+def _autorelease_pool() -> Iterator[None]:
+    """后台线程调用 Cocoa/AX 时必须排水，否则临时对象会无限堆积。"""
+    if platform.system() != "Darwin":
+        yield
+        return
+
+    try:
+        import objc
+    except ImportError:
+        from Foundation import NSAutoreleasePool
+
+        pool = NSAutoreleasePool.alloc().init()
+        try:
+            yield
+        finally:
+            del pool
+        return
+
+    with objc.autorelease_pool():
+        yield
 
 
 def _debug_window_candidates() -> list[dict[str, Any]]:
@@ -53,6 +77,11 @@ def _debug_window_candidates() -> list[dict[str, Any]]:
 
 def debug_caret_snapshot() -> dict[str, Any]:
     """采集各定位来源，仅供当前光标定位调试。"""
+    with _autorelease_pool():
+        return _debug_caret_snapshot_impl()
+
+
+def _debug_caret_snapshot_impl() -> dict[str, Any]:
     if platform.system() != "Darwin":
         return {"platform": platform.system()}
 
@@ -212,26 +241,28 @@ def debug_caret_snapshot() -> dict[str, Any]:
 
 
 def get_caret_rect(*, prefer_selected: bool = False) -> Optional[CaretRect]:
-    if platform.system() != "Darwin":
-        return None
-    try:
-        return (
-            _get_caret_ax(prefer_selected=prefer_selected)
-            or _get_ime_candidate_anchor()
-            or _get_mouse_fallback()
-        )
-    except Exception:
-        return _get_ime_candidate_anchor() or _get_mouse_fallback()
+    with _autorelease_pool():
+        if platform.system() != "Darwin":
+            return None
+        try:
+            return (
+                _get_caret_ax(prefer_selected=prefer_selected)
+                or _get_ime_candidate_anchor()
+                or _get_mouse_fallback()
+            )
+        except Exception:
+            return _get_ime_candidate_anchor() or _get_mouse_fallback()
 
 
 def get_selected_text() -> Optional[str]:
     """读取当前焦点控件中的选中文案（Accessibility）。"""
-    if platform.system() != "Darwin":
-        return None
-    try:
-        return _get_selected_text_ax()
-    except Exception:
-        return None
+    with _autorelease_pool():
+        if platform.system() != "Darwin":
+            return None
+        try:
+            return _get_selected_text_ax()
+        except Exception:
+            return None
 
 
 _CLIPBOARD_TEXT_TYPES = (
@@ -270,30 +301,32 @@ def is_clipboard_plain_text() -> bool:
 
 def get_clipboard_text() -> Optional[str]:
     """读取系统剪贴板中的纯文本。"""
-    if platform.system() != "Darwin" or not is_clipboard_plain_text():
-        return None
-    try:
-        from AppKit import NSPasteboard
+    with _autorelease_pool():
+        if platform.system() != "Darwin" or not is_clipboard_plain_text():
+            return None
+        try:
+            from AppKit import NSPasteboard
 
-        pasteboard = NSPasteboard.generalPasteboard()
-        for text_type in _CLIPBOARD_TEXT_TYPES:
-            value = pasteboard.stringForType_(text_type)
-            if value:
-                text = str(value).strip()
-                if text:
-                    return text
-    except Exception:
+            pasteboard = NSPasteboard.generalPasteboard()
+            for text_type in _CLIPBOARD_TEXT_TYPES:
+                value = pasteboard.stringForType_(text_type)
+                if value:
+                    text = str(value).strip()
+                    if text:
+                        return text
+        except Exception:
+            return None
         return None
-    return None
 
 
 def write_clipboard_text(text: str) -> None:
     """写入纯文本到系统剪贴板。"""
-    from AppKit import NSPasteboard
+    with _autorelease_pool():
+        from AppKit import NSPasteboard
 
-    pasteboard = NSPasteboard.generalPasteboard()
-    pasteboard.clearContents()
-    pasteboard.setString_forType_(text, "public.utf8-plain-text")
+        pasteboard = NSPasteboard.generalPasteboard()
+        pasteboard.clearContents()
+        pasteboard.setString_forType_(text, "public.utf8-plain-text")
 
 
 def resolve_selection_text() -> Optional[str]:
